@@ -14,7 +14,7 @@ library Subscriber {
 
     IHooks internal constant SUBSCRIBER_ZERO = IHooks(address(0));
 
-    function modify(mapping(IHooks => State) storage self, IHooks subscriber, uint32 gasRebateBps) internal {
+    function updateGasRebate(mapping(IHooks => State) storage self, IHooks subscriber, uint32 gasRebateBps) internal {
         require(subscriber != SUBSCRIBER_ZERO, CannotModifySubscriberZero());
 
         if (self[subscriber].gasRebateBps == gasRebateBps) return;
@@ -26,15 +26,15 @@ library Subscriber {
         }
 
         if (gasRebateBps > 0) {
-            IHooks next = self[SUBSCRIBER_ZERO].next;
+            IHooks current = self[SUBSCRIBER_ZERO].next;
 
-            while (next != SUBSCRIBER_ZERO && self[next].gasRebateBps >= gasRebateBps) {
-                next = self[next].next;
+            while (current != SUBSCRIBER_ZERO && self[current].gasRebateBps >= gasRebateBps) {
+                current = self[current].next;
             }
 
-            self[subscriber] = State({prev: self[next].prev, next: next, gasRebateBps: gasRebateBps});
-            self[self[next].prev].next = subscriber;
-            self[next].prev = subscriber;
+            self[subscriber] = State({prev: self[current].prev, next: current, gasRebateBps: gasRebateBps});
+            self[self[current].prev].next = subscriber;
+            self[current].prev = subscriber;
         }
     }
 }

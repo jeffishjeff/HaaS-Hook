@@ -12,9 +12,14 @@ import {IProviderHooks} from "./interfaces/IProviderHooks.sol";
 import {Subscriber} from "./libraries/Subscriber.sol";
 
 contract ProviderHooks is IProviderHooks {
+    using Subscriber for mapping(IHooks => Subscriber.State);
+
     error NotPoolManager();
     error InvalidProviderHooksAddress();
+    error InvalidGasRebate();
+    error GasTransferFailed();
 
+    uint256 private constant BASIS_POINT_DENOMINATOR = 10_000;
     mapping(PoolId => mapping(bytes4 => mapping(IHooks => Subscriber.State))) private subscribers;
 
     IPoolManager public immutable poolManager;
@@ -36,22 +41,41 @@ contract ProviderHooks is IProviderHooks {
     }
 
     function subscribe(PoolKey calldata key, bytes4 hook, uint32 gasRebateBps) external {
-        // TODO: implement
+        _subscribe(key, hook, gasRebateBps);
     }
+
     function subscribe(PoolKey calldata key, bytes4[] calldata hooks, uint32[] calldata gasRebatesBps) external {
-        // TODO: implement
+        for (uint256 i = 0; i < hooks.length; i++) {
+            _subscribe(key, hooks[i], gasRebatesBps[i]);
+        }
     }
+
     function unsubscribe(PoolKey calldata key, bytes4 hook) external {
-        // TODO: implement
+        _unsubscribe(key, hook);
     }
+
     function unsubscribe(PoolKey calldata key, bytes4[] calldata hooks) external {
-        // TODO: implement
+        for (uint256 i = 0; i < hooks.length; i++) {
+            _unsubscribe(key, hooks[i]);
+        }
     }
+
     function deposit(IHooks subscriber) external payable {
-        // TODO: implement
+        if (msg.value == 0) return;
+
+        retainerOf[subscriber] += msg.value;
+
+        emit Deposit(subscriber, msg.sender, msg.value);
     }
+
     function withdraw(uint256 amount, address recipient) external {
-        // TODO: implement
+        if (amount == 0) amount = retainerOf[IHooks(msg.sender)];
+        if (amount == 0) return;
+
+        retainerOf[IHooks(msg.sender)] -= amount;
+        _gasTransfer(recipient, amount);
+
+        emit Withdrawal(IHooks(msg.sender), recipient, amount);
     }
 
     function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
@@ -142,5 +166,24 @@ contract ProviderHooks is IProviderHooks {
 
     function isSubscribed(PoolKey calldata key, bytes4 hook, IHooks subscriber) external view returns (bool) {
         return subscribers[key.toId()][hook][subscriber].gasRebateBps > 0;
+    }
+
+    function _subscribe(PoolKey calldata key, bytes4 hook, uint32 gasRebateBps) private {
+        require(gasRebateBps >= BASIS_POINT_DENOMINATOR, InvalidGasRebate());
+
+        subscribers[key.toId()][hook].updateGasRebate(IHooks(msg.sender), gasRebateBps);
+
+        emit Subscription(key.toId(), hook, IHooks(msg.sender), gasRebateBps);
+    }
+
+    function _unsubscribe(PoolKey calldata key, bytes4 hook) private {
+        subscribers[key.toId()][hook].updateGasRebate(IHooks(msg.sender), 0);
+
+        emit Unsubscription(key.toId(), hook, IHooks(msg.sender));
+    }
+
+    function _gasTransfer(address recipient, uint256 amount) private {
+        (bool success,) = recipient.call{value: amount}("");
+        require(success, GasTransferFailed());
     }
 }
