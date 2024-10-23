@@ -1,0 +1,485 @@
+create baseCommensal
+comments
+tests
+docs
+
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.28;
+
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {ParseBytes} from "v4-core/libraries/ParseBytes.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {BeforeSwapDelta} from "v4-core/types/BeforeSwapDelta.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
+import {IProviderHooks} from "./interfaces/IProviderHooks.sol";
+import {Subscriber} from "./libraries/Subscriber.sol";
+
+contract ProviderHooks is IProviderHooks {
+    using ParseBytes for bytes;
+    using Subscriber for mapping(IHooks => Subscriber.State);
+
+    error NotPoolManager();
+    error InvalidProviderHooksAddress();
+    error InvalidGasRebate();
+    error GasTransferFailed();
+    error CannotAddLiquidityInBeforeDonate();
+    error CannotRemoveLiquidityInBeforeSwap();
+    // error CannotSwapInBeforeSwap();
+
+    bool private isBeforeDonate; // TODO: convert to transient
+    bool private isBeforeSwap; // TODO: convert to transient
+
+    uint256 private constant BASIS_POINT_DENOMINATOR = 10_000;
+    mapping(PoolId => mapping(bytes4 => mapping(IHooks => Subscriber.State))) private subscribers;
+
+    IPoolManager public immutable poolManager;
+    uint256 public immutable minGasLeft;
+    uint256 public immutable minRetainer;
+    mapping(IHooks => uint256) public retainerOf;
+
+    modifier onlyPoolManager() {
+        require(msg.sender == address(poolManager), NotPoolManager());
+        _;
+    }
+
+    constructor(IPoolManager _poolManager, uint256 _minGasLeft, uint256 _minRetainer) {
+        require(uint160(address(this)) & Hooks.ALL_HOOK_MASK == Hooks.ALL_HOOK_MASK, InvalidProviderHooksAddress());
+
+        poolManager = _poolManager;
+        minGasLeft = _minGasLeft;
+        minRetainer = _minRetainer;
+    }
+
+    function subscribe(PoolKey calldata key, bytes4 hook, uint32 gasRebateBps) external {
+        _subscribe(key, hook, gasRebateBps);
+    }
+
+    function subscribe(PoolKey calldata key, bytes4[] calldata hooks, uint32[] calldata gasRebatesBps) external {
+        for (uint256 i = 0; i < hooks.length; i++) {
+            _subscribe(key, hooks[i], gasRebatesBps[i]);
+        }
+    }
+
+    function unsubscribe(PoolKey calldata key, bytes4 hook) external {
+        _unsubscribe(key, hook);
+    }
+
+    function unsubscribe(PoolKey calldata key, bytes4[] calldata hooks) external {
+        for (uint256 i = 0; i < hooks.length; i++) {
+            _unsubscribe(key, hooks[i]);
+        }
+    }
+
+    function deposit(IHooks subscriber) external payable {
+        if (msg.value == 0) return;
+
+        retainerOf[subscriber] += msg.value;
+
+        emit Deposit(subscriber, msg.sender, msg.value);
+    }
+
+    function withdraw(uint256 amount, address recipient) external {
+        if (amount == 0) amount = retainerOf[IHooks(msg.sender)];
+        if (amount == 0) return;
+
+        retainerOf[IHooks(msg.sender)] -= amount;
+        _gasTransfer(recipient, amount);
+
+        emit Withdrawal(IHooks(msg.sender), recipient, amount);
+    }
+
+    function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
+        external
+        onlyPoolManager
+        returns (bytes4)
+    {
+        bytes memory callData = abi.encodeCall(this.beforeInitialize, (sender, key, sqrtPriceX96));
+        _callSubscribersAndRebateGas(key, IHooks.beforeInitialize.selector, callData, sender);
+
+        return IHooks.beforeInitialize.selector;
+    }
+
+    function afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
+        external
+        onlyPoolManager
+        returns (bytes4)
+    {
+        bytes memory callData = abi.encodeCall(this.afterInitialize, (sender, key, sqrtPriceX96, tick));
+        _callSubscribersAndRebateGas(key, IHooks.afterInitialize.selector, callData, sender);
+
+        return IHooks.afterInitialize.selector;
+    }
+
+    function beforeAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4) {
+        require(!isBeforeDonate, CannotAddLiquidityInBeforeDonate());
+
+        bytes memory callData = abi.encodeCall(this.beforeAddLiquidity, (sender, key, params, hookData));
+        _callSubscribersAndRebateGas(key, IHooks.beforeAddLiquidity.selector, callData, sender);
+
+        return IHooks.beforeAddLiquidity.selector;
+    }
+
+    function afterAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4, BalanceDelta) {
+        // BalanceDelta totalDelta;
+        // bytes memory callData =
+        //     abi.encodeCall(this.afterAddLiquidity, (sender, key, params, delta, feesAccrued, hookData));
+        // (IHooks[] memory _subscribers, bytes[] memory results) =
+        //     _callSubscribersAndRebateGas(key, IHooks.afterAddLiquidity.selector, callData, sender);
+
+        // for (uint256 i = 0; i < results.length; i++) {
+        //     BalanceDelta _delta = BalanceDelta.wrap(results[i].parseReturnDelta());
+
+        //     if (_delta.amount0() > 0 || _delta.amount1() > 0) {
+        //         // TODO: remove subscriber, take all retainer as punishment, and revert
+        //     }
+
+        //     totalDelta = totalDelta + _delta;
+        // }
+    }
+
+    function beforeRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4) {
+        require(!isBeforeSwap, CannotRemoveLiquidityInBeforeSwap());
+
+        bytes memory callData = abi.encodeCall(this.beforeRemoveLiquidity, (sender, key, params, hookData));
+        _callSubscribersAndRebateGas(key, IHooks.beforeRemoveLiquidity.selector, callData, sender);
+
+        return IHooks.beforeRemoveLiquidity.selector;
+    }
+
+    function afterRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4, BalanceDelta) {
+        // TODO: implement
+    }
+    function beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4, BeforeSwapDelta, uint24) {
+        // TODO: implement
+    }
+    function afterSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4, int128) {
+        // TODO: implement
+    }
+
+    function beforeDonate(
+        address sender,
+        PoolKey calldata key,
+        uint256 amount0,
+        uint256 amount1,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4) {
+        isBeforeDonate = true;
+
+        bytes memory callData = abi.encodeCall(this.beforeDonate, (sender, key, amount0, amount1, hookData));
+        _callSubscribersAndRebateGas(key, IHooks.beforeDonate.selector, callData, sender);
+
+        isBeforeDonate = false;
+
+        return IHooks.beforeDonate.selector;
+    }
+
+    function afterDonate(
+        address sender,
+        PoolKey calldata key,
+        uint256 amount0,
+        uint256 amount1,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4) {
+        bytes memory callData = abi.encodeCall(this.afterDonate, (sender, key, amount0, amount1, hookData));
+        _callSubscribersAndRebateGas(key, IHooks.afterDonate.selector, callData, sender);
+
+        return IHooks.afterDonate.selector;
+    }
+
+    function isSubscribed(PoolKey calldata key, bytes4 hook, IHooks subscriber) external view returns (bool) {
+        return subscribers[key.toId()][hook][subscriber].gasRebateBps > 0;
+    }
+
+    function _subscribe(PoolKey calldata key, bytes4 hook, uint32 gasRebateBps) private {
+        require(gasRebateBps >= BASIS_POINT_DENOMINATOR, InvalidGasRebate());
+
+        subscribers[key.toId()][hook].updateGasRebate(IHooks(msg.sender), gasRebateBps);
+
+        emit Subscription(key.toId(), hook, IHooks(msg.sender), gasRebateBps);
+    }
+
+    function _unsubscribe(PoolKey calldata key, bytes4 hook) private {
+        subscribers[key.toId()][hook].updateGasRebate(IHooks(msg.sender), 0);
+
+        emit Unsubscription(key.toId(), hook, IHooks(msg.sender));
+    }
+
+    function _gasTransfer(address recipient, uint256 amount) private {
+        (bool success,) = recipient.call{value: amount}("");
+        require(success, GasTransferFailed());
+    }
+
+    function _callSubscriber(IHooks subscriber, bytes memory data) private returns (bool, bytes memory) {
+        (bool success, bytes memory result) = address(subscriber).call(data);
+        success = success && result.length >= 32 && result.parseSelector() == data.parseSelector();
+
+        return (success, result);
+    }
+
+    function _callSubscribersAndRebateGas(PoolKey calldata key, bytes4 hook, bytes memory data, address recipient)
+        private
+        returns (IHooks[] memory, bytes[] memory)
+    {
+        if (hook == IHooks.beforeInitialize.selector || hook == IHooks.afterInitialize.selector) {
+            // TODO: global subscribers only
+        } else {
+            // TODO: global and pool subscribers
+        }
+    }
+}
+
+
+    /// @notice Helper function for calling a symbiont, check for success but do not revert
+    function _callSymbiont(IHooks symbiont, bytes memory data, uint256 gasLimit)
+        private
+        returns (bool success, bytes memory result)
+    {
+        assembly ("memory-safe") {
+            success := call(gasLimit, symbiont, 0, add(data, 0x20), mload(data), 0, 0)
+            success := and(success, gt(returndatasize(), 31))
+
+            // continue if call succeeds with return data
+            if success {
+                result := mload(0x40)
+                mstore(0x40, add(result, and(add(returndatasize(), 0x3f), not(0x1f))))
+                mstore(result, returndatasize())
+                returndatacopy(add(result, 0x20), 0, returndatasize())
+
+                // ensure the correct selector is returned
+                // success := and(success, eq(mload(add(data, 0x20)), mload(add(result, 0x20))))
+            }
+        }
+    }
+
+    /// @notice Helper function to call symbionts attached to a receptor, and give gas rebate to recipient
+    function _callSymbiontsAndGiveGasRebate(Receptor receptor, bytes memory data, address recipient) private {
+        uint256 gasLimit = (block.gaslimit * GAS_LIMIT_BPS) / BPS_DENOMINATOR; // gas allowed per symbiont call, 1% of block gas limit
+        IHooks[] storage s_symbionts = s_receptorSymbionts[receptor];
+
+        uint256 totalGasRebate;
+        // sload length each time as the array may change
+        for (uint256 i = 0; i < s_symbionts.length;) {
+            uint256 gasBefore = gasleft();
+            if (gasBefore < gasLimit) break; // stop if not enough gas left
+
+            IHooks symbiont = s_symbionts[i];
+            uint256 balance = s_symbiontBalances[symbiont];
+
+            if (balance < gasLimit) {
+                _detach(receptor, symbiont); // detach symbiont if not enough balance, do not increment i
+            } else {
+                (bool success,) = _callSymbiont(symbiont, data, gasLimit);
+
+                if (!success) {
+                    _detach(receptor, symbiont); // detach symbiont if call fails, do not increment i
+                } else {
+                    uint256 gasRebate = (gasBefore - gasleft()) * GAS_REBATE_MULTIPLIER_BPS / BPS_DENOMINATOR;
+                    if (balance < gasRebate) gasRebate = balance; // ensure gas rebate does not exceed balance
+
+                    totalGasRebate += gasRebate;
+                    s_symbiontBalances[symbiont] = balance - gasRebate;
+                    i++; // finally increment i
+                }
+            }
+        }
+
+        // credit recipient with claim, could just send directly but has potential security implications
+        if (totalGasRebate > 0) {
+            s_poolManager.mint(recipient, 0, totalGasRebate);
+            s_poolManager.sync(CurrencyLibrary.ADDRESS_ZERO);
+            s_poolManager.settle{value: totalGasRebate}();
+        }
+    }
+
+contract HostHooks is IHost, IHooks {
+    using Hooks for IHooks;
+
+    function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
+        external
+        onlyPoolManager
+        returns (bytes4)
+    {
+        uint256 totalGasRebate;
+
+        IHooks commensal = globalCommensals[this.beforeInitialize.selector][Commensal.COMMENSAL_ZERO].next;
+        while (gasleft() > minGasLeft && commensal != Commensal.COMMENSAL_ZERO) {
+            if (commensalRetainers[commensal] < minRetainer) {
+                IHooks next = globalCommensals[this.beforeInitialize.selector][commensal].next;
+
+                globalCommensals[this.beforeInitialize.selector].modify(commensal, 0);
+
+                commensal = next;
+            } else {
+                uint256 gasBefore = gasleft();
+
+                address(commensal).call(abi.encodeCall(this.beforeInitialize, (sender, key, sqrtPriceX96)));
+
+                uint256 gasUsed = gasBefore - gasleft();
+                uint256 gasRebate = gasUsed * globalCommensals[this.beforeInitialize.selector][commensal].gasRebate
+                    / BASIS_POINT_DENOMINATOR;
+
+                gasRebate = gasRebate > commensalRetainers[commensal] ? commensalRetainers[commensal] : gasRebate;
+                commensalRetainers[commensal] -= gasRebate;
+                totalGasRebate += gasRebate;
+
+                commensal = globalCommensals[this.beforeInitialize.selector][commensal].next;
+            }
+        }
+
+        sender.call{value: totalGasRebate}("");
+
+        return this.beforeInitialize.selector;
+    }
+
+    function afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
+        external
+        onlyPoolManager
+        returns (bytes4)
+    {
+        uint256 totalGasRebate;
+
+        IHooks commensal = globalCommensals[this.afterInitialize.selector][Commensal.COMMENSAL_ZERO].next;
+        while (gasleft() > minGasLeft && commensal != Commensal.COMMENSAL_ZERO) {
+            if (commensalRetainers[commensal] < minRetainer) {
+                IHooks next = globalCommensals[this.afterInitialize.selector][commensal].next;
+
+                globalCommensals[this.afterInitialize.selector].modify(commensal, 0);
+
+                commensal = next;
+            } else {
+                uint256 gasBefore = gasleft();
+
+                bytes memory callData = abi.encodeCall(this.afterInitialize, (sender, key, sqrtPriceX96, tick));
+                try commensal.callHook(callData) returns (bytes memory result) {} catch {}
+            }
+        }
+
+        // bytes memory callData = abi.encodeCall(this.afterInitialize, (sender, key, sqrtPriceX96, tick));
+        // _callGlobalCommensalsAndRebateGas(this.afterInitialize.selector, callData, sender);
+
+        // return this.afterInitialize.selector;
+    }
+
+    function afterAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4, BalanceDelta) {
+        bytes memory callData =
+            abi.encodeCall(this.afterAddLiquidity, (sender, key, params, delta, feesAccrued, hookData));
+        _callGlobalAndPoolCommensalsAndRebateGas(key.toId(), this.afterAddLiquidity.selector, callData, sender);
+
+        // TODO: account for balance delta
+    }
+
+    function afterRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4, BalanceDelta) {
+        bytes memory callData =
+            abi.encodeCall(this.afterRemoveLiquidity, (sender, key, params, delta, feesAccrued, hookData));
+        _callGlobalAndPoolCommensalsAndRebateGas(key.toId(), this.afterRemoveLiquidity.selector, callData, sender);
+
+        // TODO: account for balance delta
+    }
+
+    function beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4, BeforeSwapDelta, uint24) {
+        require(!isBeforeSwap, CannotSwapInBeforeSwap());
+
+        isBeforeSwap = true;
+
+        bytes memory callData = abi.encodeCall(this.beforeSwap, (sender, key, params, hookData));
+        _callGlobalAndPoolCommensalsAndRebateGas(key.toId(), this.beforeSwap.selector, callData, sender);
+
+        isBeforeSwap = false;
+
+        // TODO: account for BeforeSwapDelta, lpFee override is 0
+    }
+
+    function afterSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external onlyPoolManager returns (bytes4, int128) {
+        bytes memory callData = abi.encodeCall(this.afterSwap, (sender, key, params, delta, hookData));
+        _callGlobalAndPoolCommensalsAndRebateGas(key.toId(), this.afterSwap.selector, callData, sender);
+
+        // TODO: account for unspecified delta
+    }
+
+    function _callGlobalAndPoolCommensalsAndRebateGas(
+        PoolId poolId,
+        bytes4 selector,
+        bytes memory data,
+        address recipient
+    ) private {}
+
+    // TODO:
+    // function _todo(mapping(IHooks => Commensal.State) storage commensals) private {
+    //     IHooks current = commensals[Commensal.COMMENSAL_ZERO].next;
+    //     uint256 gasBefore = gasleft();
+
+    //     while (
+    //         gasBefore > minGasLeft && current != Commensal.COMMENSAL_ZERO && commensalRetainers[current] > minRetainer
+    //     ) {
+    //         try {
+
+    //         }
+
+    //         current = commensals[current].next;
+    //     }
+    // }
+}
