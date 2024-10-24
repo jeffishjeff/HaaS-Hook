@@ -7,7 +7,7 @@ import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 
 /// @notice Interface for the ProviderHooks contract
-interface IProviderHooks {
+interface IProviderHooks is IHooks {
     /// @notice Emitted when a subscriber subscribes to the hook of the pool (or globally if poolId is 0)
     /// @param poolId The ID of the pool the subscriber is subscribing to
     /// @param hook The hook the subscriber is subscribing to
