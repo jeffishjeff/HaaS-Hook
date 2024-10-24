@@ -8,13 +8,13 @@ import {ParseBytes} from "v4-core/libraries/ParseBytes.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {IProviderHooks} from "./interfaces/IProviderHooks.sol";
-import {PoolKeyLibrary} from "./libraries/PoolKeyLibrary.sol";
+import {SafePoolId} from "./libraries/SafePoolId.sol";
 import {Subscriber} from "./libraries/Subscriber.sol";
 
 /// @notice ProviderHooks contract
 contract ProviderHooks is IProviderHooks {
     using ParseBytes for bytes;
-    using PoolKeyLibrary for PoolKey;
+    using SafePoolId for PoolKey;
     using Subscriber for mapping(IHooks => Subscriber.State);
 
     error InvalidGasRebate();
@@ -93,26 +93,26 @@ contract ProviderHooks is IProviderHooks {
 
     /// @inheritdoc IProviderHooks
     function gasRebateOf(PoolKey calldata key, bytes4 hook, IHooks subscriber) external view returns (uint32) {
-        return subscribers[key.toIdOrZero()][hook][subscriber].gasRebateBps;
+        return subscribers[key.safeToId()][hook][subscriber].gasRebateBps;
     }
 
     /// @inheritdoc IProviderHooks
     function isSubscribed(PoolKey calldata key, bytes4 hook, IHooks subscriber) external view returns (bool) {
-        return subscribers[key.toIdOrZero()][hook][subscriber].gasRebateBps > 0;
+        return subscribers[key.safeToId()][hook][subscriber].gasRebateBps > 0;
     }
 
     function _subscribe(PoolKey calldata key, bytes4 hook, uint32 gasRebateBps) private {
         // Ensure that the gas rebate is at least 100%
         require(gasRebateBps >= BASIS_POINT_DENOMINATOR, InvalidGasRebate());
 
-        PoolId poolId = key.toIdOrZero();
+        PoolId poolId = key.safeToId();
         subscribers[poolId][hook].updateGasRebate(IHooks(msg.sender), gasRebateBps);
 
         emit Subscription(poolId, hook, IHooks(msg.sender), gasRebateBps);
     }
 
     function _unsubscribe(PoolKey calldata key, bytes4 hook) private {
-        PoolId poolId = key.toIdOrZero();
+        PoolId poolId = key.safeToId();
         subscribers[poolId][hook].updateGasRebate(IHooks(msg.sender), 0);
 
         emit Unsubscription(poolId, hook, IHooks(msg.sender));
