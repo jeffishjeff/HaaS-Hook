@@ -1,66 +1,29 @@
-## Foundry
+Abstract
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+1 Introduction
 
-Foundry consists of:
+2 Host Hooks
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+- Multiple commensal and transient hooks
+- Ignore address encoding/constraints
+- Commensals before transients
+- Error handling
 
-## Documentation
+3 Commensal Hooks
 
-https://book.getfoundry.sh/
+- Attach and detach
+- Bidding for execution
+- Gas deposit and refill
+- Global or pool specific
 
-## Usage
+4 Transient Hooks
 
-### Build
+- User specified during execution
+- HookData encoding
 
-```shell
-$ forge build
-```
-
-### Test
-
-```shell
-$ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+Cannot swap or remove liquidity in before swap
+Cannot add liquidity in before donate
+Before swap cannot change lp fee
+Cannot return positive balance delta
+No guarantee of execution or order of execution
+Action by other than original sender is not propagated
