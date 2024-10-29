@@ -20,7 +20,7 @@ To enable this functionality, a Uniswap v4 pool must specify an external smart c
 
 The HaaS Hook refers to a system that consists of a Provider Hooks, multiple Subscriber Hooks, and multiple User Specified Hooks. The Provider Hooks acts as a dispatcher, forwarding each hook call to the respective list of Subscriber Hooks and any User Specified Hooks provided by the caller.
 
-#### Provider Hooks
+### Provider Hooks
 
 The Provider Hooks implements the `IProviderHooks` interface, which inheirts `IHooks`. It is set at the pool's creation, following the standard Uniswap v4 workflow, with the `Hooks.ALL_HOOK_MASK` flag enabled. Which indicates that it supports all 10 action hooks and can return all 4 deltas.
 
@@ -30,7 +30,7 @@ During a hook call, the Provider Hooks sequentially forwards the call to global 
 
 The Provider Hook bypasses the address bit-checking logic in Uniswap V4, allowing Subscriber and User Specified Hooks to be deployed at any address. However, return values are checked to ensure successful execution. For delta-returning actions, the Provider Hook aggregates the deltas returned from all Subscriber and User Specified Hooks.
 
-#### Subscriber Hooks
+### Subscriber Hooks
 
 Subscriber Hooks are just regular `IHooks` but receive forwarded hook calls from the Provider Hook without any address validation. That is, they can execute logic and return deltas even if their deployed address does not reflect the respective flags.
 
@@ -38,7 +38,7 @@ A Subscriber Hook will execute twice if subscribed to both the global and pool s
 
 Anyone can deposit to a Subscriber Hook’s gas retainer, but only the hook itself can withdraw from it.
 
-#### User Specified Hooks
+### User Specified Hooks
 
 User can specify additional hooks by providering an `IHooks[]` array in the `hookData`. These User Specified Hooks are executed after Subscriber Hooks, provided that sufficient gas remains.
 
