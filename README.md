@@ -51,4 +51,4 @@ Currently, the Provider Hooks does not check for duplicate User Specified Hooks.
 - Re-entry calls to `removeLiquidity` and `swap` are disallowed in `beforeSwap`.
 - Re-entry calls to `addLiquidity` is disallowed in `beforeDonate`.
 - LP Fee Modification: `beforeSwap` cannot change the LP fee.
-- Delta Constraints: Positive deltas returned from Subscriber or User Specified Hooks are ignored, meaning they can give but not take tokens.
+- Delta Constraints: Positive deltas returned from Subscriber or User Specified Hooks are ignored, meaning they can give but not take tokens. Also, each Subscriber or User Specified Hooks must settle its non-zero delta accounts.
