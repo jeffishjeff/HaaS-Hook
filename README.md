@@ -1,54 +1,54 @@
 > [!CAUTION]
 > Not for production use!\
-> This repo has not been thoroughly tested and audited, and there is also a known griefing attack vector that will cause any hook call to revert.
+> This repo has not been thoroughly tested or audited, and it contains a known griefing attack vector that can cause hook call to revert.
 
 ## Introduction
 
-Uniswap v4 introduces an innovative new feature called hooks, where external smart contract functions can be invoked at various points during a pool's core logic flow such as before/after modifying liquidity or before/after swap.
+Uniswap v4 introduces an innovative new feature called hooks, which allows external smart contract functions to be invoked at various points in a pool's core logic flow, such as before or after modifying liquidity, or before or after swap.
 
-To enable this, a pool in Uniswap v4 must specify this external smart contract address at its creation time, which becomes a part of the pool key (which derives pool ID). This permenant, one-to-one relationship guarantees exact interactions at bytecode level and it is up to the user to choose the pool with desired hooks logic. However, this architecture also leads to a number of practical challenges:
+To enable this functionality, a Uniswap v4 pool must specify an external smart contract address at creation, which then becomes a part of the pool key (which derives pool ID). This permenant, one-to-one relationship ensures exact interactions at the bytecode level, and it is up to the users to select pools based on their desired hooks logic. However, this setup poses several challenges:
 
-- For developers: developers may create new innovations with hooks but lack the resources or know-how to attract sufficient liquidity and volume, particularly for tokens pairs with strong existing incumbents, for them to be successful.
+- For Developers: while developers can create new innovations with hooks, they may struggle to attract liquidity and volume to make them successful, especially for token pairs with strong incumbent pools.
 
-- For incentivizers: parties (e.g. token issurers, event organizers, etc.) may wish to temporarily incentivize liquidity and/or volume according to their business objectives. But existing pools/hooks may not provide such functionality (particularly hard for incentivizing liquidity) and it's not practical to deploy new ones for such purpose.
+- For Incentivizers: parties (e.g., token issurers, event organizers, etc.) may want to incentivize liquidity and/or volume according to their business needs. Existing pools/hooks may not provide this functionality, particularly for incentivizing liquidity, and it is impractical to deploy new pools solely for this purpose.
 
-- For users: users are forced to choose between interacting with pools with deeper liquidity vs. pools with desired hooks logic.
+- For Users: users are forced to choose between pools with deeper liquidity and whos with specific hooks logic.
 
-**HaaS (Hooks as a Service) Hook** is an attempt to address these problems by decoupling pools from hooks logic, allowing multiple, ad hoc, and user specified hooks to execute on each pool action.
+**Hooks as a Service (HaaS) Hook** aims to solve these issues by decoupling pools from hooks logic, enabling multiple, ad hoc, and user specified hooks for each pool action.
 
 ## HaaS Hook
 
-At a high level, HaaS Hook is made up of a Provider Hooks, multiple Subscriber Hooks, and multiple User Specified Hooks. Provider Hooks functions as a dispatcher that forwards action hook calls to respective lists of Subscriber Hooks, as well as any User Specified Hooks provided by the caller.
+The HaaS Hook refers to a system that consists of a Provider Hooks, multiple Subscriber Hooks, and multiple User Specified Hooks. The Provider Hooks acts as a dispatcher, forwarding each hook call to the respective list of Subscriber Hooks and any User Specified Hooks provided by the caller.
 
 #### Provider Hooks
 
-The Provider Hooks implements `IProviderHooks` which in term inheirts `IHooks`. It is specified at a pool's creation time like the normal Uniswap v4 workflow, and has `Hooks.ALL_HOOK_MASK` flag turned on. Which means it implements all 10 action hooks and is permited to return all 4 deltas.
+The Provider Hooks implements the `IProviderHooks` interface, which inheirts `IHooks`. It is set at the pool's creation, following the standard Uniswap v4 workflow, with the `Hooks.ALL_HOOK_MASK` flag enabled. Which indicates that it supports all 10 action hooks and can return all 4 deltas.
 
-The `IProviderHooks` interface allows Subsriber Hooks to subscribe/unsubscribe themselves to action hooks on the Provider Hooks, either globally or for individual pools. They must commit a gas rebate (in basis points) for each subscription, which specifies how much the amount of gas (relative to actual usage) they are willing to pay. Subscriber Hooks must also maintain a gas retainer in the Provider Hooks where gas rebates are deducted from.
+The `IProviderHooks` interface allows Subsriber Hooks to subscribe to or unsubscribe from specific hooks on the Provider Hooks, either globally or for individual pools. Each subscription requires a committed gas rebate (in basis points) relative to actual gas usage. Subscriber Hooks must also maintain a gas retainer within the Provider Hook, from which gas rebates are deducted.
 
-During a action hook call, Provider Hooks forwards call to both global and pool specific Subscriber Hooks that have subscribed to said action, in descending order of gas rebate committed, then User Specified Hooks in `hookData` are also called in the order specified. A Subscriber Hooks is skipped and unsubscribed if its gas retainer falls below a `minGasRetainer` threshold, and the whole process is short circuited if `gasleft` falls below a `minGasLeft` threshold.
+During a hook call, the Provider Hooks sequentially forwards the call to global and pool specific Subscriber Hooks, ordered by their committed gas rebate, followed by User Specified Hooks in the `hookData` parameter. A Subscriber Hook is skipped and unsubscribed if its gas retainer falls below the `minGasRetainer` threshold, and the whole process stops if `gasleft` falls below the `minGasLeft` threshold.
 
-Address bit checking logic in Uniswap v4 is omitted when Provider Hooks forwards calls, meaning that Subscriber Hooks and User Specified Hooks can be deployed at any address and still receive calls from subscribed actions. However, reture values are still checked to ensure success. For delta returning actions, the Provider Hooks returns the summation of that from all Subscriber Hooks and User Specified Hooks.
+The Provider Hook bypasses the address bit-checking logic in Uniswap V4, allowing Subscriber and User Specified Hooks to be deployed at any address. However, return values are checked to ensure successful execution. For delta-returning actions, the Provider Hook aggregates the deltas returned from all Subscriber and User Specified Hooks.
 
 #### Subscriber Hooks
 
-Subscriber Hooks are just regular `IHooks`. The only difference is that they will receive forwarded action hook calls from the Provider Hooks without checking their deployed address. That is, they can execute logics and return deltas even if respective flags in their deployed address says otherwise.
+Subscriber Hooks are just regular `IHooks` but receive forwarded hook calls from the Provider Hook without any address validation. That is, they can execute logic and return deltas even if their deployed address does not reflect the respective flags.
 
-The same Subscriber Hooks will execute twice if it is subscribed to both the global as well as the pool specific list.
+A Subscriber Hook will execute twice if subscribed to both the global and pool specific lists.
 
-Anyone can `deposit` to the Subscriber Hooks' gas retainer, but only it can `withdraw` from it.
+Anyone can deposit to a Subscriber Hook’s gas retainer, but only the hook itself can withdraw from it.
 
 #### User Specified Hooks
 
-User can specified additional hooks for execution by providering an `IHooks[]` value in `hookData`. User Specified Hooks are executed after Subscriber Hooks, if there is still enough gas left.
+User can specify additional hooks by providering an `IHooks[]` array in the `hookData`. These User Specified Hooks are executed after Subscriber Hooks, provided that sufficient gas remains.
 
-Currently the Provider Hooks does not check for duplication in User Specified Hooks.
+Currently, the Provider Hooks does not check for duplicate User Specified Hooks.
 
 ## Constraints
 
-- There is no gurantee of execution for any Subscriber Hooks or User Specified Hooks, depending on `gasleft` and gas rebate committed
-- Subscriber Hooks and User Specified Hooks can make re-entry calls to the pool, but to prevent inifite loops, only action hook calls from the original sender are forwarded.
-- Re-entry calls to `removeLiquidity` and `swap` are not allowed in `beforeSwap`
-- Re-entry calls to `addLiquidity` is not allowed in `beforeDonate`
-- `beforeSwap` cannot change the LP fee
-- Positive deltas returned from Subscriber Hooks and User Specified Hooks are ignored (e.g. Subscriber Hooks and User Specified Hooks can give but not take tokens)
+- Execution Guarantees: There is no guarantee of execution for any Subscriber or User Specified Hook, as this depends on `gasleft` and the committed gas rebate value.
+- Re-Entrancy: Subscriber and User Specified Hooks can make re-entry calls to the pool. However, to prevent infinite loops, only hook calls from the original sender are forwarded.
+- Re-entry calls to `removeLiquidity` and `swap` are disallowed in `beforeSwap`.
+- Re-entry calls to `addLiquidity` is disallowed in `beforeDonate`.
+- LP Fee Modification: `beforeSwap` cannot change the LP fee.
+- Delta Constraints: Positive deltas returned from Subscriber or User Specified Hooks are ignored, meaning they can give but not take tokens.
