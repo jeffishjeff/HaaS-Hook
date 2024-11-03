@@ -6,8 +6,8 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 
-/// @notice Interface for the ProviderHooks contract
-interface IProviderHooks is IHooks {
+/// @notice Interface for the ProviderHook contract
+interface IProviderHook is IHooks {
     /// @notice Thrown when the gas rebate offered is less than 10_000 basis points
     error InvalidGasRebate();
     /// @notice Thrown when depositing or withdrawing 0 gas retainer
@@ -58,7 +58,7 @@ interface IProviderHooks is IHooks {
     /// @param recipient The recipient of the withdrawal
     function withdraw(uint256 amount, address recipient) external;
 
-    /// @notice Gets the pool manager of this provider hooks
+    /// @notice Gets the pool manager of this provider hook
     /// @return The pool manager
     function poolManager() external view returns (IPoolManager);
 

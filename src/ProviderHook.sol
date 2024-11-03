@@ -10,12 +10,12 @@ import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {BeforeSwapDelta} from "v4-core/types/BeforeSwapDelta.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {IProviderHooks} from "./interfaces/IProviderHooks.sol";
+import {IProviderHook} from "./interfaces/IProviderHook.sol";
 import {GlobalOrPoolId} from "./libraries/GlobalOrPoolId.sol";
 import {Subscriber} from "./libraries/Subscriber.sol";
 
-/// @notice ProviderHooks contract
-contract ProviderHooks is IProviderHooks {
+/// @notice ProviderHook contract
+contract ProviderHook is IProviderHook {
     using SafeCast for int256;
     using ParseBytes for bytes;
     using GlobalOrPoolId for PoolKey;
@@ -23,8 +23,8 @@ contract ProviderHooks is IProviderHooks {
 
     /// @notice Thrown when message sender is not the pool manager
     error NotPoolManager();
-    /// @notice Thrown when deploying to an invalid provider hooks address
-    error InvalidProviderHooksAddress();
+    /// @notice Thrown when deploying to an invalid provider hook address
+    error InvalidProviderHookAddress();
     /// @notice Thrown when a gas transfer fails
     error GasTransferFailed();
     /// @notice Thrown when trying to add liquidity in beforeDonate
@@ -40,15 +40,15 @@ contract ProviderHooks is IProviderHooks {
     bool private isBeforeSwap; // TODO: convert to transient
     mapping(PoolId => mapping(bytes4 => mapping(IHooks => Subscriber.State))) private subscribers;
 
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     IPoolManager public immutable poolManager;
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     uint256 public immutable minGasLeft;
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     uint256 public immutable minGasRetainer;
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     uint256 public immutable maxSubscriberCalls;
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     mapping(IHooks => uint256) public gasRetainerOf;
 
     // can only be called by the pool manager with the original sender
@@ -66,7 +66,7 @@ contract ProviderHooks is IProviderHooks {
 
     constructor(IPoolManager _poolManager, uint256 _minGasLeft, uint256 _minGasRetainer, uint256 _maxSubscriberCalls) {
         // ensures that the contract address has all the hook permissions
-        require(uint160(address(this)) & Hooks.ALL_HOOK_MASK == Hooks.ALL_HOOK_MASK, InvalidProviderHooksAddress());
+        require(uint160(address(this)) & Hooks.ALL_HOOK_MASK == Hooks.ALL_HOOK_MASK, InvalidProviderHookAddress());
 
         poolManager = _poolManager;
         minGasLeft = _minGasLeft;
@@ -75,10 +75,10 @@ contract ProviderHooks is IProviderHooks {
     }
 
     // ***********************************
-    // ***** IProviderHooks Funtions *****
+    // ***** IProviderHook Funtions *****
     // ***********************************
 
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     function subscribe(PoolKey calldata key, bytes4 hook, uint32 gasRebateBps) external {
         // ensures that the gas rebate is at least 10_000 basis points
         require(gasRebateBps >= BASIS_POINT_DENOMINATOR, InvalidGasRebate());
@@ -89,12 +89,12 @@ contract ProviderHooks is IProviderHooks {
         emit Subscription(poolId, hook, IHooks(msg.sender), gasRebateBps);
     }
 
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     function unsubscribe(PoolKey calldata key, bytes4 hook) external {
         _unsubscribe(key.toGlobalOrPoolId(), hook, IHooks(msg.sender));
     }
 
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     function deposit(IHooks subscriber) external payable {
         // ensures that the deposit amount is greater than 0
         require(msg.value > 0, InvalidGasRetainerTransferAmount());
@@ -104,7 +104,7 @@ contract ProviderHooks is IProviderHooks {
         emit Deposit(subscriber, msg.sender, msg.value);
     }
 
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     function withdraw(uint256 amount, address recipient) external {
         if (amount == 0) amount = gasRetainerOf[IHooks(msg.sender)];
         // ensures that the withdrawal amount is greater than 0
@@ -116,12 +116,12 @@ contract ProviderHooks is IProviderHooks {
         emit Withdrawal(IHooks(msg.sender), recipient, amount);
     }
 
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     function isSubscribed(PoolKey calldata key, bytes4 hook, IHooks subscriber) external view returns (bool) {
         return subscribers[key.toGlobalOrPoolId()][hook][subscriber].gasRebateBps > 0;
     }
 
-    /// @inheritdoc IProviderHooks
+    /// @inheritdoc IProviderHook
     function gasRebateOf(PoolKey calldata key, bytes4 hook, IHooks subscriber) external view returns (uint32) {
         return subscribers[key.toGlobalOrPoolId()][hook][subscriber].gasRebateBps;
     }
